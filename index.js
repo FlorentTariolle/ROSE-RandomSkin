@@ -20,6 +20,7 @@
   let randomFlagImageUrl = null; // HTTP URL from Python
   const pendingRandomFlagRequest = new Map(); // Track pending requests
   let isInChampSelect = false; // Track if we're in ChampSelect phase
+  let championLocked = false; // Track if a champion is locked
   
   // Dice button state
   let diceButtonElement = null;
@@ -49,12 +50,14 @@
       width: 38px !important;
       height: 23px !important;
       cursor: pointer !important;
-      z-index: 10 !important;
+      z-index: 10000 !important;
       pointer-events: auto !important;
       background-size: contain !important;
       background-repeat: no-repeat !important;
       background-position: center !important;
       opacity: 1 !important;
+      display: block !important;
+      visibility: visible !important;
     }
     
     .lu-random-dice-button:hover {
@@ -146,6 +149,33 @@
       handleLocalAssetUrl(payload);
     } else if (payload.type === "phase-change") {
       handlePhaseChange(payload);
+    } else if (payload.type === "champion-locked") {
+      handleChampionLocked(payload);
+    }
+  }
+  
+  function handleChampionLocked(data) {
+    const wasLocked = championLocked;
+    championLocked = data.locked === true;
+    
+    log("debug", "Received champion lock state update", { locked: championLocked, wasLocked: wasLocked });
+    
+    // Only create dice button if entering ChampSelect and champion is now locked
+    if (isInChampSelect && championLocked && !wasLocked) {
+      log("debug", "Champion locked - creating dice button");
+      setTimeout(() => {
+        createDiceButton();
+        if (randomModeActive) {
+          updateRandomFlag();
+        }
+      }, 100);
+    } else if (!championLocked && wasLocked) {
+      // Champion unlocked - remove dice button
+      log("debug", "Champion unlocked - removing dice button");
+      if (diceButtonElement) {
+        diceButtonElement.remove();
+        diceButtonElement = null;
+      }
     }
   }
   
@@ -156,13 +186,17 @@
     
     if (isInChampSelect && !wasInChampSelect) {
       log("debug", "Entered ChampSelect phase - enabling plugin");
-      // Try to create dice button and update flag when entering ChampSelect
-      setTimeout(() => {
-        createDiceButton();
-        if (randomModeActive) {
-          updateRandomFlag();
-        }
-      }, 100);
+      // Only create dice button if champion is already locked
+      if (championLocked) {
+        setTimeout(() => {
+          createDiceButton();
+          if (randomModeActive) {
+            updateRandomFlag();
+          }
+        }, 100);
+      } else {
+        log("debug", "Waiting for champion lock before creating dice button");
+      }
     } else if (!isInChampSelect && wasInChampSelect) {
       log("debug", "Left ChampSelect phase - disabling plugin");
       // Hide flag and remove dice button when leaving ChampSelect
@@ -178,6 +212,8 @@
       if (updateRandomFlag._retryCount) {
         updateRandomFlag._retryCount = 0;
       }
+      // Reset champion lock state when leaving ChampSelect
+      championLocked = false;
     }
   }
   
@@ -199,8 +235,8 @@
       pendingDiceImageRequests.delete(DICE_DISABLED_ASSET_PATH);
       log("info", "Received dice disabled image URL from Python", { url: url });
       
-      // Update button if it exists and is in disabled state (only when in ChampSelect)
-      if (isInChampSelect && diceButtonElement && diceButtonState === 'disabled') {
+      // Update button if it exists and is in disabled state
+      if (diceButtonElement && diceButtonState === 'disabled') {
         updateDiceButtonImage();
       }
     } else if (assetPath === DICE_ENABLED_ASSET_PATH && url) {
@@ -208,8 +244,8 @@
       pendingDiceImageRequests.delete(DICE_ENABLED_ASSET_PATH);
       log("info", "Received dice enabled image URL from Python", { url: url });
       
-      // Update button if it exists and is in enabled state (only when in ChampSelect)
-      if (isInChampSelect && diceButtonElement && diceButtonState === 'enabled') {
+      // Update button if it exists and is in enabled state
+      if (diceButtonElement && diceButtonState === 'enabled') {
         updateDiceButtonImage();
       }
     }
@@ -305,6 +341,12 @@
   }
   
   function createDiceButton() {
+    // Don't create button if champion is not locked
+    if (!championLocked) {
+      log("debug", "Cannot create dice button - champion not locked");
+      return;
+    }
+    
     // Remove existing button if it exists
     if (diceButtonElement) {
       diceButtonElement.remove();
@@ -331,9 +373,16 @@
     button.style.top = `${location.y}px`;
     button.style.width = `${location.width}px`;
     button.style.height = `${location.height}px`;
-    button.style.zIndex = "10"; // Same z-level as carousel items
+    button.style.zIndex = "10000"; // High z-index to ensure visibility
+    button.style.display = "block"; // Ensure button is visible
+    button.style.visibility = "visible"; // Ensure button is visible
+    button.style.opacity = "1"; // Ensure button is visible
     
-    // Set initial background image based on state
+    // Append to DOM first so updateDiceButtonImage can work
+    document.body.appendChild(button);
+    diceButtonElement = button;
+    
+    // Set initial background image based on state (after appending to DOM)
     updateDiceButtonImage();
     
     // Add click handler
@@ -343,11 +392,12 @@
       handleDiceButtonClick();
     });
     
-    document.body.appendChild(button);
-    diceButtonElement = button;
-    
     // Store the relative element for repositioning
     diceButtonElement._relativeTo = location.relativeTo;
+    
+    // Force browser to render the button immediately
+    void button.offsetHeight; // Trigger reflow
+    button.style.display = "block"; // Ensure it's set again after reflow
     
     log("info", "Created dice button", { x: location.x, y: location.y, state: diceButtonState });
   }
@@ -626,8 +676,8 @@
       if (randomModeActive && !currentRewardsElement) {
         updateRandomFlag();
       }
-      // Only create dice button if it doesn't exist - don't update position dynamically
-      if (!diceButtonElement) {
+      // Only create dice button if it doesn't exist and champion is locked - don't update position dynamically
+      if (!diceButtonElement && championLocked) {
         createDiceButton();
       }
     });
