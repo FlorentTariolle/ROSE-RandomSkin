@@ -46,11 +46,11 @@
     }
     
     .lu-random-dice-button {
-      position: fixed !important;
+      position: absolute !important;
       width: 38px !important;
       height: 23px !important;
       cursor: pointer !important;
-      z-index: 10000 !important;
+      z-index: 0 !important;
       pointer-events: auto !important;
       background-size: contain !important;
       background-repeat: no-repeat !important;
@@ -301,6 +301,27 @@
     return null;
   }
   
+  function findDiceButtonContainer() {
+    // Only try to find container when in ChampSelect
+    if (!isInChampSelect) {
+      return null;
+    }
+    
+    // Find the main champ select container
+    const mainContainer = document.querySelector(".champion-select-main-container");
+    if (!mainContainer) {
+      return null;
+    }
+    
+    // Find the div with class "visible" inside the main container
+    const visibleDiv = mainContainer.querySelector("div.visible");
+    if (!visibleDiv) {
+      return null;
+    }
+    
+    return visibleDiv;
+  }
+
   function findDiceButtonLocation() {
     // Only try to find location when in ChampSelect
     if (!isInChampSelect) {
@@ -353,6 +374,17 @@
       diceButtonElement = null;
     }
     
+    // Find the target container (div.visible in main champ select container)
+    const targetContainer = findDiceButtonContainer();
+    if (!targetContainer) {
+      // Don't log error on every attempt - only log occasionally
+      if (!createDiceButton._lastLogTime || Date.now() - createDiceButton._lastLogTime > 5000) {
+        log("debug", "Could not find dice button container (will retry)");
+        createDiceButton._lastLogTime = Date.now();
+      }
+      return;
+    }
+    
     const location = findDiceButtonLocation();
     if (!location) {
       // Don't log error on every attempt - only log occasionally
@@ -366,20 +398,24 @@
     // Request images if not already loaded
     requestDiceButtonImages();
     
+    // Get container's position relative to viewport for absolute positioning
+    const containerRect = targetContainer.getBoundingClientRect();
+    
     const button = document.createElement("div");
     button.className = `lu-random-dice-button ${diceButtonState}`;
-    button.style.position = "fixed"; // Use fixed positioning relative to viewport
-    button.style.left = `${location.x}px`;
-    button.style.top = `${location.y}px`;
+    button.style.position = "absolute"; // Use absolute positioning relative to container
+    // Calculate position relative to container
+    button.style.left = `${location.x - containerRect.left}px`;
+    button.style.top = `${location.y - containerRect.top}px`;
     button.style.width = `${location.width}px`;
     button.style.height = `${location.height}px`;
-    button.style.zIndex = "10000"; // High z-index to ensure visibility
+    button.style.zIndex = "0";
     button.style.display = "block"; // Ensure button is visible
     button.style.visibility = "visible"; // Ensure button is visible
     button.style.opacity = "1"; // Ensure button is visible
     
-    // Append to DOM first so updateDiceButtonImage can work
-    document.body.appendChild(button);
+    // Append to the target container instead of document.body
+    targetContainer.appendChild(button);
     diceButtonElement = button;
     
     // Set initial background image based on state (after appending to DOM)
@@ -394,6 +430,7 @@
     
     // Store the relative element for repositioning
     diceButtonElement._relativeTo = location.relativeTo;
+    diceButtonElement._container = targetContainer;
     
     // Force browser to render the button immediately
     void button.offsetHeight; // Trigger reflow
