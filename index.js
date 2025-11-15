@@ -5,7 +5,7 @@
 (function initRandomSkin() {
   const LOG_PREFIX = "[LU-RandomSkin]";
   const REWARDS_SELECTOR = ".skin-selection-item-information.loyalty-reward-icon--rewards";
-  const RGM_FLAG_IMAGE_PATH = "rcp-fe-lol-champ-select/global/default/images/config/champ-free-to-play-rgm-flag.png";
+  const RANDOM_FLAG_ASSET_PATH = "random_flag.png";
   
   // WebSocket bridge for receiving random mode state from Python
   const BRIDGE_URL = "ws://localhost:3000";
@@ -15,8 +15,8 @@
   
   let randomModeActive = false;
   let currentRewardsElement = null;
-  let rgmFlagImageUrl = null; // HTTP URL from Python or LCU path
-  const pendingRgmFlagRequest = new Map(); // Track pending requests
+  let randomFlagImageUrl = null; // HTTP URL from Python
+  const pendingRandomFlagRequest = new Map(); // Track pending requests
   
   // Dice button state
   let diceButtonElement = null;
@@ -152,10 +152,10 @@
     const assetPath = data.assetPath;
     const url = data.url;
     
-    if (assetPath === RGM_FLAG_IMAGE_PATH && url) {
-      rgmFlagImageUrl = url;
-      pendingRgmFlagRequest.delete(RGM_FLAG_IMAGE_PATH);
-      log("info", "Received RGM flag image URL from Python", { url: url });
+    if (assetPath === RANDOM_FLAG_ASSET_PATH && url) {
+      randomFlagImageUrl = url;
+      pendingRandomFlagRequest.delete(RANDOM_FLAG_ASSET_PATH);
+      log("info", "Received random flag image URL from Python", { url: url });
       
       // Update the flag if it's currently active
       if (randomModeActive) {
@@ -185,7 +185,20 @@
   }
   
   function findRewardsElement() {
-    // Try to find the rewards element in the selected skin item first
+    // Always prioritize the central skin item (offset-2) in the carousel
+    const allItems = document.querySelectorAll(".skin-selection-item");
+    for (const item of allItems) {
+      // Check if this is the central item (offset-2)
+      if (item.classList.contains("skin-carousel-offset-2")) {
+        const info = item.querySelector(".skin-selection-item-information.loyalty-reward-icon--rewards");
+        if (info) {
+          log("debug", "Found rewards element in central skin item (offset-2)");
+          return info;
+        }
+      }
+    }
+    
+    // Fallback: Try to find the rewards element in the selected skin item
     const selectedItem = document.querySelector(".skin-selection-item.skin-selection-item-selected");
     if (selectedItem) {
       const info = selectedItem.querySelector(".skin-selection-item-information.loyalty-reward-icon--rewards");
@@ -195,14 +208,14 @@
       }
     }
     
-    // Try direct selector
+    // Fallback: Try direct selector
     const element = document.querySelector(REWARDS_SELECTOR);
     if (element) {
       log("debug", "Found rewards element via direct selector");
       return element;
     }
     
-    // If not found, try to find it in the skin selection carousel
+    // Fallback: Try to find it in any skin selection carousel item
     const carousel = document.querySelector(".skin-selection-carousel");
     if (carousel) {
       const items = carousel.querySelectorAll(".skin-selection-item");
@@ -340,25 +353,18 @@
     }
   }
   
-  function requestRgmFlagImage() {
-    // Request RGM flag image from Python (same way as Elementalist Lux icons)
-    // First try to use LCU path directly, if that doesn't work, request from Python
-    if (!rgmFlagImageUrl && !pendingRgmFlagRequest.has(RGM_FLAG_IMAGE_PATH)) {
-      pendingRgmFlagRequest.set(RGM_FLAG_IMAGE_PATH, true);
+  function requestRandomFlagImage() {
+    // Request random flag image from Python (same way as HistoricMode)
+    if (!randomFlagImageUrl && !pendingRandomFlagRequest.has(RANDOM_FLAG_ASSET_PATH)) {
+      pendingRandomFlagRequest.set(RANDOM_FLAG_ASSET_PATH, true);
       
-      // Try LCU path first (relative to client)
-      const lcuPath = RGM_FLAG_IMAGE_PATH;
-      rgmFlagImageUrl = lcuPath; // Use LCU path directly
-      log("info", "Using LCU path for RGM flag", { path: lcuPath });
-      
-      // Also request from Python as fallback
       const payload = {
         type: "request-local-asset",
-        assetPath: RGM_FLAG_IMAGE_PATH,
+        assetPath: RANDOM_FLAG_ASSET_PATH,
         timestamp: Date.now(),
       };
       
-      log("debug", "Requesting RGM flag image from Python (fallback)", { assetPath: RGM_FLAG_IMAGE_PATH });
+      log("debug", "Requesting random flag image from Python", { assetPath: RANDOM_FLAG_ASSET_PATH });
       
       if (bridgeReady && bridgeSocket && bridgeSocket.readyState === WebSocket.OPEN) {
         bridgeSocket.send(JSON.stringify(payload));
@@ -412,8 +418,8 @@
     
     if (randomModeActive) {
       // Request image if we don't have it yet
-      if (!rgmFlagImageUrl) {
-        requestRgmFlagImage();
+      if (!randomFlagImageUrl) {
+        requestRandomFlagImage();
         // Wait for image URL before applying
         return;
       }
@@ -423,9 +429,9 @@
       element.style.setProperty("visibility", "visible", "important");
       element.style.setProperty("opacity", "1", "important");
       
-      // Apply the image URL (LCU path or Python-served HTTP URL)
+      // Apply the image URL from Python
       element.classList.add("lu-random-flag-active");
-      element.style.setProperty("background-image", `url("${rgmFlagImageUrl}")`, "important");
+      element.style.setProperty("background-image", `url("${randomFlagImageUrl}")`, "important");
       element.style.setProperty("background-repeat", "no-repeat", "important");
       element.style.setProperty("background-size", "contain", "important");
       element.style.setProperty("height", "32px", "important");
@@ -440,7 +446,7 @@
       element.style.setProperty("content", " ", "important");
       
       log("info", "Random flag shown on rewards element", { 
-        url: rgmFlagImageUrl,
+        url: randomFlagImageUrl,
         display: element.style.display,
         visibility: element.style.visibility
       });
@@ -454,24 +460,40 @@
   function hideFlagOnElement(element) {
     if (!element) return;
     
+    // Only remove our flag class
     element.classList.remove("lu-random-flag-active");
-    element.style.removeProperty("background-image");
-    element.style.removeProperty("background-repeat");
-    element.style.removeProperty("background-size");
-    element.style.removeProperty("height");
-    element.style.removeProperty("width");
-    element.style.removeProperty("position");
-    element.style.removeProperty("right");
-    element.style.removeProperty("top");
-    element.style.removeProperty("pointer-events");
-    element.style.removeProperty("cursor");
-    element.style.removeProperty("-webkit-user-select");
-    element.style.removeProperty("list-style-type");
-    element.style.removeProperty("content");
-    // Explicitly hide the element (rewards icon is usually hidden by default)
-    element.style.setProperty("display", "none", "important");
-    element.style.setProperty("visibility", "hidden", "important");
-    element.style.setProperty("opacity", "0", "important");
+    
+    // Check if historic flag is active - if so, don't remove shared styles
+    const hasHistoricFlag = element.classList.contains("lu-historic-flag-active");
+    
+    if (!hasHistoricFlag) {
+      // No other flag is active - safe to remove all styles
+      element.style.removeProperty("background-image");
+      element.style.removeProperty("background-repeat");
+      element.style.removeProperty("background-size");
+      element.style.removeProperty("height");
+      element.style.removeProperty("width");
+      element.style.removeProperty("position");
+      element.style.removeProperty("right");
+      element.style.removeProperty("top");
+      element.style.removeProperty("pointer-events");
+      element.style.removeProperty("cursor");
+      element.style.removeProperty("-webkit-user-select");
+      element.style.removeProperty("list-style-type");
+      element.style.removeProperty("content");
+      // Explicitly hide the element (rewards icon is usually hidden by default)
+      element.style.setProperty("display", "none", "important");
+      element.style.setProperty("visibility", "hidden", "important");
+      element.style.setProperty("opacity", "0", "important");
+    } else {
+      // Historic flag is active - only remove our background image, keep shared styles
+      // Check if the background-image is ours (contains random_flag.png)
+      const bgImage = element.style.getPropertyValue("background-image");
+      if (bgImage && bgImage.includes("random_flag.png")) {
+        element.style.removeProperty("background-image");
+      }
+      // Don't remove other styles as historic flag needs them
+    }
   }
   
   function init() {
@@ -508,8 +530,8 @@
       subtree: true,
     });
     
-    // Request RGM flag image on init (for when it's needed)
-    requestRgmFlagImage();
+    // Request random flag image on init (for when it's needed)
+    requestRandomFlagImage();
     
     // Initial check - ensure flag is hidden on startup (random mode starts inactive)
     // Also create dice button and update flag after a delay to ensure DOM is ready
