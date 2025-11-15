@@ -247,7 +247,7 @@
       return null;
     }
     
-    // Always prioritize the central skin item (offset-2) in the carousel
+    // Only consider the central skin item (offset-2) in the carousel
     const allItems = document.querySelectorAll(".skin-selection-item");
     for (const item of allItems) {
       // Check if this is the central item (offset-2)
@@ -260,38 +260,8 @@
       }
     }
     
-    // Fallback: Try to find the rewards element in the selected skin item
-    const selectedItem = document.querySelector(".skin-selection-item.skin-selection-item-selected");
-    if (selectedItem) {
-      const info = selectedItem.querySelector(".skin-selection-item-information.loyalty-reward-icon--rewards");
-      if (info) {
-        log("debug", "Found rewards element in selected skin item");
-        return info;
-      }
-    }
-    
-    // Fallback: Try direct selector
-    const element = document.querySelector(REWARDS_SELECTOR);
-    if (element) {
-      log("debug", "Found rewards element via direct selector");
-      return element;
-    }
-    
-    // Fallback: Try to find it in any skin selection carousel item
-    const carousel = document.querySelector(".skin-selection-carousel");
-    if (carousel) {
-      const items = carousel.querySelectorAll(".skin-selection-item");
-      for (const item of items) {
-        const info = item.querySelector(".skin-selection-item-information");
-        if (info && info.classList.contains("loyalty-reward-icon--rewards")) {
-          log("debug", "Found rewards element in carousel item");
-          return info;
-        }
-      }
-    }
-    
     // Only log if we're actually in ChampSelect (to avoid spam before entering)
-    log("debug", "Rewards element not found anywhere");
+    log("debug", "Rewards element not found in central skin item");
     return null;
   }
   
@@ -438,27 +408,14 @@
     }
   }
   
-  function updateDiceButtonPosition() {
-    if (!diceButtonElement) {
-      return;
-    }
-    
-    const location = findDiceButtonLocation();
-    if (location) {
-      diceButtonElement.style.left = `${location.x}px`;
-      diceButtonElement.style.top = `${location.y}px`;
-      diceButtonElement._relativeTo = location.relativeTo;
-    }
-  }
-  
   function updateDiceButton() {
     if (!diceButtonElement) {
       createDiceButton();
       return;
     }
     
-    // Update button position in case skin item changed
-    updateDiceButtonPosition();
+    // Don't update position dynamically - it's set once on creation
+    // Only update button state and image
     
     // Update button state
     diceButtonElement.className = `lu-random-dice-button ${diceButtonState}`;
@@ -669,12 +626,9 @@
       if (randomModeActive && !currentRewardsElement) {
         updateRandomFlag();
       }
-      // Update dice button if location changes or doesn't exist
+      // Only create dice button if it doesn't exist - don't update position dynamically
       if (!diceButtonElement) {
         createDiceButton();
-      } else {
-        // Update position if skin selection changed
-        updateDiceButtonPosition();
       }
     });
     
