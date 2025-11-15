@@ -307,19 +307,28 @@
       return null;
     }
     
-    // Find the main champ select container
+    // Find the carousel container to match its stacking context
+    const carouselContainer = document.querySelector(".skin-selection-carousel-container");
+    if (carouselContainer) {
+      return carouselContainer;
+    }
+    
+    // Fallback: find the carousel itself
+    const carousel = document.querySelector(".skin-selection-carousel");
+    if (carousel) {
+      return carousel;
+    }
+    
+    // Last fallback: find the main champ select container and then div.visible
     const mainContainer = document.querySelector(".champion-select-main-container");
-    if (!mainContainer) {
-      return null;
+    if (mainContainer) {
+      const visibleDiv = mainContainer.querySelector("div.visible");
+      if (visibleDiv) {
+        return visibleDiv;
+      }
     }
     
-    // Find the div with class "visible" inside the main container
-    const visibleDiv = mainContainer.querySelector("div.visible");
-    if (!visibleDiv) {
-      return null;
-    }
-    
-    return visibleDiv;
+    return null;
   }
 
   function findDiceButtonLocation() {
@@ -401,10 +410,17 @@
     // Get container's position relative to viewport for absolute positioning
     const containerRect = targetContainer.getBoundingClientRect();
     
+    // Ensure container has positioning context for absolute children
+    const containerComputedStyle = window.getComputedStyle(targetContainer);
+    if (containerComputedStyle.position === 'static') {
+      targetContainer.style.position = 'relative';
+    }
+    
     const button = document.createElement("div");
     button.className = `lu-random-dice-button ${diceButtonState}`;
     button.style.position = "absolute"; // Use absolute positioning relative to container
     // Calculate position relative to container
+    // getBoundingClientRect() already accounts for scroll, transforms, etc.
     button.style.left = `${location.x - containerRect.left}px`;
     button.style.top = `${location.y - containerRect.top}px`;
     button.style.width = `${location.width}px`;
