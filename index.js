@@ -220,22 +220,36 @@
   }
   
   function findDiceButtonLocation() {
-    // Find the dice button location - it should be near the center bottom of the skin selection area
-    // Similar to Python's positioning: center_x = 800, center_y = 754 for 1600x900
-    const skinCarousel = document.querySelector(".skin-selection-carousel");
-    if (!skinCarousel) {
+    // Find the dice button location - position it relative to the selected skin item
+    // Similar to how LU-ChromaWheel positions its button
+    const selectedItem = document.querySelector(".skin-selection-item.skin-selection-item-selected");
+    if (!selectedItem) {
+      // Fallback: try to find any skin item with offset 2 (center position)
+      const allItems = document.querySelectorAll(".skin-selection-item");
+      for (const item of allItems) {
+        if (item.classList.contains("skin-carousel-offset-2")) {
+          const rect = item.getBoundingClientRect();
+          // Position at bottom center of the skin item
+          return {
+            x: rect.left + rect.width / 2 - 23, // Half of button width (46px)
+            y: rect.bottom - 30, // Position near bottom
+            width: 46,
+            height: 27,
+            relativeTo: item
+          };
+        }
+      }
       return null;
     }
     
-    const rect = skinCarousel.getBoundingClientRect();
-    const centerX = rect.left + rect.width / 2;
-    const centerY = rect.bottom - 50; // Position near bottom center
-    
+    const rect = selectedItem.getBoundingClientRect();
+    // Position at bottom center of the selected skin item
     return {
-      x: centerX - 23, // Half of button width (46px)
-      y: centerY - 13.5, // Half of button height (27px)
+      x: rect.left + rect.width / 2 - 23, // Half of button width (46px)
+      y: rect.bottom - 30, // Position near bottom
       width: 46,
-      height: 27
+      height: 27,
+      relativeTo: selectedItem
     };
   }
   
@@ -248,16 +262,22 @@
     
     const location = findDiceButtonLocation();
     if (!location) {
-      log("debug", "Could not find dice button location");
+      // Don't log error on every attempt - only log occasionally
+      if (!createDiceButton._lastLogTime || Date.now() - createDiceButton._lastLogTime > 5000) {
+        log("debug", "Could not find dice button location (will retry)");
+        createDiceButton._lastLogTime = Date.now();
+      }
       return;
     }
     
     const button = document.createElement("div");
     button.className = `lu-random-dice-button ${diceButtonState}`;
+    button.style.position = "fixed"; // Use fixed positioning relative to viewport
     button.style.left = `${location.x}px`;
     button.style.top = `${location.y}px`;
     button.style.width = `${location.width}px`;
     button.style.height = `${location.height}px`;
+    button.style.zIndex = "10000";
     
     // Add click handler
     button.addEventListener("click", (e) => {
@@ -269,7 +289,23 @@
     document.body.appendChild(button);
     diceButtonElement = button;
     
+    // Store the relative element for repositioning
+    diceButtonElement._relativeTo = location.relativeTo;
+    
     log("info", "Created dice button", { x: location.x, y: location.y, state: diceButtonState });
+  }
+  
+  function updateDiceButtonPosition() {
+    if (!diceButtonElement) {
+      return;
+    }
+    
+    const location = findDiceButtonLocation();
+    if (location) {
+      diceButtonElement.style.left = `${location.x}px`;
+      diceButtonElement.style.top = `${location.y}px`;
+      diceButtonElement._relativeTo = location.relativeTo;
+    }
   }
   
   function updateDiceButton() {
@@ -277,6 +313,9 @@
       createDiceButton();
       return;
     }
+    
+    // Update button position in case skin item changed
+    updateDiceButtonPosition();
     
     // Update button state
     diceButtonElement.className = `lu-random-dice-button ${diceButtonState}`;
@@ -455,9 +494,12 @@
       if (randomModeActive && !currentRewardsElement) {
         updateRandomFlag();
       }
-      // Update dice button if location changes
+      // Update dice button if location changes or doesn't exist
       if (!diceButtonElement) {
         createDiceButton();
+      } else {
+        // Update position if skin selection changed
+        updateDiceButtonPosition();
       }
     });
     
@@ -470,12 +512,21 @@
     requestRgmFlagImage();
     
     // Initial check - ensure flag is hidden on startup (random mode starts inactive)
+    // Also create dice button and update flag after a delay to ensure DOM is ready
     setTimeout(() => {
       // Force update to ensure flag is hidden if element exists
       updateRandomFlag();
       // Create dice button
       createDiceButton();
     }, 1000);
+    
+    // Also try again after a longer delay to catch late DOM updates
+    setTimeout(() => {
+      if (!diceButtonElement) {
+        createDiceButton();
+      }
+      updateRandomFlag();
+    }, 3000);
     
     log("info", "LU-RandomSkin plugin initialized");
   }
