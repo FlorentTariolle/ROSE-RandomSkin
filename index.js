@@ -6,6 +6,8 @@
   const LOG_PREFIX = "[LU-RandomSkin]";
   const REWARDS_SELECTOR = ".skin-selection-item-information.loyalty-reward-icon--rewards";
   const RANDOM_FLAG_ASSET_PATH = "random_flag.png";
+  const DICE_DISABLED_ASSET_PATH = "dice-disabled.png";
+  const DICE_ENABLED_ASSET_PATH = "dice-enabled.png";
   
   // WebSocket bridge for receiving random mode state from Python
   const BRIDGE_URL = "ws://localhost:3000";
@@ -17,10 +19,14 @@
   let currentRewardsElement = null;
   let randomFlagImageUrl = null; // HTTP URL from Python
   const pendingRandomFlagRequest = new Map(); // Track pending requests
+  let isInChampSelect = false; // Track if we're in ChampSelect phase
   
   // Dice button state
   let diceButtonElement = null;
   let diceButtonState = 'disabled'; // 'disabled' or 'enabled'
+  let diceDisabledImageUrl = null; // HTTP URL from Python
+  let diceEnabledImageUrl = null; // HTTP URL from Python
+  const pendingDiceImageRequests = new Map(); // Track pending requests
   
   const CSS_RULES = `
     .skin-selection-item-information.loyalty-reward-icon--rewards.lu-random-flag-active {
@@ -39,27 +45,20 @@
     }
     
     .lu-random-dice-button {
-      position: absolute !important;
-      width: 46px !important;
-      height: 27px !important;
+      position: fixed !important;
+      width: 38px !important;
+      height: 23px !important;
       cursor: pointer !important;
-      z-index: 10000 !important;
+      z-index: 10 !important;
       pointer-events: auto !important;
       background-size: contain !important;
       background-repeat: no-repeat !important;
       background-position: center !important;
+      opacity: 1 !important;
     }
     
     .lu-random-dice-button:hover {
       opacity: 0.8 !important;
-    }
-    
-    .lu-random-dice-button.disabled {
-      background-image: url('rcp-fe-lol-champ-select/global/default/images/config/champ-free-to-play-rgm-dice-disabled.png') !important;
-    }
-    
-    .lu-random-dice-button.enabled {
-      background-image: url('rcp-fe-lol-champ-select/global/default/images/config/champ-free-to-play-rgm-dice-enabled.png') !important;
     }
   `;
   
@@ -145,6 +144,40 @@
       handleRandomModeStateUpdate(payload);
     } else if (payload.type === "local-asset-url") {
       handleLocalAssetUrl(payload);
+    } else if (payload.type === "phase-change") {
+      handlePhaseChange(payload);
+    }
+  }
+  
+  function handlePhaseChange(data) {
+    const wasInChampSelect = isInChampSelect;
+    // Check if we're entering ChampSelect phase
+    isInChampSelect = data.phase === "ChampSelect" || data.phase === "FINALIZATION";
+    
+    if (isInChampSelect && !wasInChampSelect) {
+      log("debug", "Entered ChampSelect phase - enabling plugin");
+      // Try to create dice button and update flag when entering ChampSelect
+      setTimeout(() => {
+        createDiceButton();
+        if (randomModeActive) {
+          updateRandomFlag();
+        }
+      }, 100);
+    } else if (!isInChampSelect && wasInChampSelect) {
+      log("debug", "Left ChampSelect phase - disabling plugin");
+      // Hide flag and remove dice button when leaving ChampSelect
+      if (currentRewardsElement) {
+        hideFlagOnElement(currentRewardsElement);
+        currentRewardsElement = null;
+      }
+      if (diceButtonElement) {
+        diceButtonElement.remove();
+        diceButtonElement = null;
+      }
+      // Reset retry counters
+      if (updateRandomFlag._retryCount) {
+        updateRandomFlag._retryCount = 0;
+      }
     }
   }
   
@@ -157,15 +190,34 @@
       pendingRandomFlagRequest.delete(RANDOM_FLAG_ASSET_PATH);
       log("info", "Received random flag image URL from Python", { url: url });
       
-      // Update the flag if it's currently active
-      if (randomModeActive) {
+      // Update the flag if it's currently active and we're in ChampSelect
+      if (isInChampSelect && randomModeActive) {
         updateRandomFlag();
+      }
+    } else if (assetPath === DICE_DISABLED_ASSET_PATH && url) {
+      diceDisabledImageUrl = url;
+      pendingDiceImageRequests.delete(DICE_DISABLED_ASSET_PATH);
+      log("info", "Received dice disabled image URL from Python", { url: url });
+      
+      // Update button if it exists and is in disabled state (only when in ChampSelect)
+      if (isInChampSelect && diceButtonElement && diceButtonState === 'disabled') {
+        updateDiceButtonImage();
+      }
+    } else if (assetPath === DICE_ENABLED_ASSET_PATH && url) {
+      diceEnabledImageUrl = url;
+      pendingDiceImageRequests.delete(DICE_ENABLED_ASSET_PATH);
+      log("info", "Received dice enabled image URL from Python", { url: url });
+      
+      // Update button if it exists and is in enabled state (only when in ChampSelect)
+      if (isInChampSelect && diceButtonElement && diceButtonState === 'enabled') {
+        updateDiceButtonImage();
       }
     }
   }
   
   function handleRandomModeStateUpdate(data) {
     const wasActive = randomModeActive;
+    const previousState = diceButtonState;
     randomModeActive = data.active === true;
     diceButtonState = data.diceState || 'disabled';
     
@@ -176,6 +228,11 @@
       randomSkinId: data.randomSkinId
     });
     
+    // Only update if we're in ChampSelect
+    if (!isInChampSelect) {
+      return;
+    }
+    
     // Update dice button state
     updateDiceButton();
     
@@ -185,6 +242,11 @@
   }
   
   function findRewardsElement() {
+    // Only try to find elements when in ChampSelect
+    if (!isInChampSelect) {
+      return null;
+    }
+    
     // Always prioritize the central skin item (offset-2) in the carousel
     const allItems = document.querySelectorAll(".skin-selection-item");
     for (const item of allItems) {
@@ -228,42 +290,48 @@
       }
     }
     
+    // Only log if we're actually in ChampSelect (to avoid spam before entering)
     log("debug", "Rewards element not found anywhere");
     return null;
   }
   
   function findDiceButtonLocation() {
-    // Find the dice button location - position it relative to the selected skin item
-    // Similar to how LU-ChromaWheel positions its button
-    const selectedItem = document.querySelector(".skin-selection-item.skin-selection-item-selected");
-    if (!selectedItem) {
-      // Fallback: try to find any skin item with offset 2 (center position)
-      const allItems = document.querySelectorAll(".skin-selection-item");
-      for (const item of allItems) {
-        if (item.classList.contains("skin-carousel-offset-2")) {
-          const rect = item.getBoundingClientRect();
-          // Position at bottom center of the skin item
-          return {
-            x: rect.left + rect.width / 2 - 23, // Half of button width (46px)
-            y: rect.bottom - 30, // Position near bottom
-            width: 46,
-            height: 27,
-            relativeTo: item
-          };
-        }
-      }
+    // Only try to find location when in ChampSelect
+    if (!isInChampSelect) {
       return null;
     }
     
-    const rect = selectedItem.getBoundingClientRect();
-    // Position at bottom center of the selected skin item
-    return {
-      x: rect.left + rect.width / 2 - 23, // Half of button width (46px)
-      y: rect.bottom - 30, // Position near bottom
-      width: 46,
-      height: 27,
-      relativeTo: selectedItem
-    };
+    // Always find the central skin item (offset-2) in the carousel
+    const allItems = document.querySelectorAll(".skin-selection-item");
+    for (const item of allItems) {
+      // Check if this is the central item (offset-2)
+      if (item.classList.contains("skin-carousel-offset-2")) {
+        const rect = item.getBoundingClientRect();
+        // Position at same x (centered) but 78px lower in y than central skin
+        return {
+          x: rect.left + rect.width / 2 - 19, // Half of button width (38px) - centered
+          y: rect.top + 78, // 78px lower than the top of the central skin
+          width: 38,
+          height: 23,
+          relativeTo: item
+        };
+      }
+    }
+    
+    // Fallback: try selected item if central item not found
+    const selectedItem = document.querySelector(".skin-selection-item.skin-selection-item-selected");
+    if (selectedItem) {
+      const rect = selectedItem.getBoundingClientRect();
+      return {
+        x: rect.left + rect.width / 2 - 19, // Half of button width (38px) - centered
+        y: rect.top + 78, // 78px lower than the top of the selected skin
+        width: 38,
+        height: 23,
+        relativeTo: selectedItem
+      };
+    }
+    
+    return null;
   }
   
   function createDiceButton() {
@@ -283,6 +351,9 @@
       return;
     }
     
+    // Request images if not already loaded
+    requestDiceButtonImages();
+    
     const button = document.createElement("div");
     button.className = `lu-random-dice-button ${diceButtonState}`;
     button.style.position = "fixed"; // Use fixed positioning relative to viewport
@@ -290,7 +361,10 @@
     button.style.top = `${location.y}px`;
     button.style.width = `${location.width}px`;
     button.style.height = `${location.height}px`;
-    button.style.zIndex = "10000";
+    button.style.zIndex = "10"; // Same z-level as carousel items
+    
+    // Set initial background image based on state
+    updateDiceButtonImage();
     
     // Add click handler
     button.addEventListener("click", (e) => {
@@ -306,6 +380,62 @@
     diceButtonElement._relativeTo = location.relativeTo;
     
     log("info", "Created dice button", { x: location.x, y: location.y, state: diceButtonState });
+  }
+  
+  function updateDiceButtonImage() {
+    if (!diceButtonElement) {
+      return;
+    }
+    
+    // Use local images if available, otherwise wait for them to load
+    if (diceButtonState === 'disabled' && diceDisabledImageUrl) {
+      diceButtonElement.style.backgroundImage = `url("${diceDisabledImageUrl}")`;
+    } else if (diceButtonState === 'enabled' && diceEnabledImageUrl) {
+      diceButtonElement.style.backgroundImage = `url("${diceEnabledImageUrl}")`;
+    } else {
+      // Images not loaded yet, request them
+      requestDiceButtonImages();
+    }
+  }
+  
+  function requestDiceButtonImages() {
+    // Request disabled image
+    if (!diceDisabledImageUrl && !pendingDiceImageRequests.has(DICE_DISABLED_ASSET_PATH)) {
+      pendingDiceImageRequests.set(DICE_DISABLED_ASSET_PATH, true);
+      
+      const payload = {
+        type: "request-local-asset",
+        assetPath: DICE_DISABLED_ASSET_PATH,
+        timestamp: Date.now(),
+      };
+      
+      log("debug", "Requesting dice disabled image from Python", { assetPath: DICE_DISABLED_ASSET_PATH });
+      
+      if (bridgeReady && bridgeSocket && bridgeSocket.readyState === WebSocket.OPEN) {
+        bridgeSocket.send(JSON.stringify(payload));
+      } else {
+        bridgeQueue.push(JSON.stringify(payload));
+      }
+    }
+    
+    // Request enabled image
+    if (!diceEnabledImageUrl && !pendingDiceImageRequests.has(DICE_ENABLED_ASSET_PATH)) {
+      pendingDiceImageRequests.set(DICE_ENABLED_ASSET_PATH, true);
+      
+      const payload = {
+        type: "request-local-asset",
+        assetPath: DICE_ENABLED_ASSET_PATH,
+        timestamp: Date.now(),
+      };
+      
+      log("debug", "Requesting dice enabled image from Python", { assetPath: DICE_ENABLED_ASSET_PATH });
+      
+      if (bridgeReady && bridgeSocket && bridgeSocket.readyState === WebSocket.OPEN) {
+        bridgeSocket.send(JSON.stringify(payload));
+      } else {
+        bridgeQueue.push(JSON.stringify(payload));
+      }
+    }
   }
   
   function updateDiceButtonPosition() {
@@ -332,6 +462,10 @@
     
     // Update button state
     diceButtonElement.className = `lu-random-dice-button ${diceButtonState}`;
+    
+    // Update button image based on state
+    updateDiceButtonImage();
+    
     log("debug", "Updated dice button state", { state: diceButtonState });
   }
   
@@ -375,10 +509,19 @@
   }
   
   function updateRandomFlag() {
+    // Only try to update if we're in ChampSelect
+    if (!isInChampSelect) {
+      return;
+    }
+    
     // Always find the element in the currently selected skin (don't use cached element)
     const element = findRewardsElement();
     
     if (!element) {
+      // Only retry if we're still in ChampSelect
+      if (!isInChampSelect) {
+        return;
+      }
       log("debug", "Rewards element not found, will retry");
       // Retry after a short delay (max 5 retries to avoid infinite loop)
       if (!updateRandomFlag._retryCount) {
@@ -386,7 +529,13 @@
       }
       if (updateRandomFlag._retryCount < 5) {
         updateRandomFlag._retryCount++;
-        setTimeout(updateRandomFlag, 500);
+        setTimeout(() => {
+          if (isInChampSelect) { // Check again before retrying
+            updateRandomFlag();
+          } else {
+            updateRandomFlag._retryCount = 0; // Reset if we left ChampSelect
+          }
+        }, 500);
       } else {
         log("warn", "Rewards element not found after 5 retries, giving up");
         updateRandomFlag._retryCount = 0; // Reset for next attempt
@@ -511,8 +660,12 @@
     // Setup WebSocket bridge
     setupBridgeSocket();
     
-    // Watch for DOM changes to find rewards element and dice button location
+    // Watch for DOM changes to find rewards element and dice button location (only when in ChampSelect)
     const observer = new MutationObserver(() => {
+      if (!isInChampSelect) {
+        return; // Don't do anything if not in ChampSelect
+      }
+      
       if (randomModeActive && !currentRewardsElement) {
         updateRandomFlag();
       }
@@ -533,22 +686,10 @@
     // Request random flag image on init (for when it's needed)
     requestRandomFlagImage();
     
-    // Initial check - ensure flag is hidden on startup (random mode starts inactive)
-    // Also create dice button and update flag after a delay to ensure DOM is ready
-    setTimeout(() => {
-      // Force update to ensure flag is hidden if element exists
-      updateRandomFlag();
-      // Create dice button
-      createDiceButton();
-    }, 1000);
+    // Request dice button images on init
+    requestDiceButtonImages();
     
-    // Also try again after a longer delay to catch late DOM updates
-    setTimeout(() => {
-      if (!diceButtonElement) {
-        createDiceButton();
-      }
-      updateRandomFlag();
-    }, 3000);
+    // Don't try to create elements on init - wait for phase-change message to know if we're in ChampSelect
     
     log("info", "LU-RandomSkin plugin initialized");
   }
