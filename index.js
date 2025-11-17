@@ -1,9 +1,11 @@
 /**
- * LU-RandomSkin Plugin
- * Shows dice button and random flag at rewards location based on Python state
+ * @name Rose-RandomSkin
+ * @author Rose Team
+ * @description Random skin for Pengu Loader
+ * @link https://github.com/FlorentTariolle/Rose-RandomSkin
  */
 (function initRandomSkin() {
-  const LOG_PREFIX = "[LU-RandomSkin]";
+  const LOG_PREFIX = "[Rose-RandomSkin]";
   const REWARDS_SELECTOR = ".skin-selection-item-information.loyalty-reward-icon--rewards";
   const RANDOM_FLAG_ASSET_PATH = "random_flag.png";
   const DICE_DISABLED_ASSET_PATH = "dice-disabled.png";
