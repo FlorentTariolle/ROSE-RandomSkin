@@ -12,10 +12,39 @@
   const DICE_ENABLED_ASSET_PATH = "dice-enabled.png";
   
   // WebSocket bridge for receiving random mode state from Python
-  const BRIDGE_URL = "ws://localhost:3000";
+  let BRIDGE_PORT = 3000; // Default, will be updated from /port endpoint
+  let BRIDGE_URL = `ws://localhost:${BRIDGE_PORT}`;
   let bridgeSocket = null;
   let bridgeReady = false;
   let bridgeQueue = [];
+  
+  // Load bridge port from /port endpoint
+  async function loadBridgePort() {
+    try {
+      for (let port = 3000; port <= 3010; port++) {
+        try {
+          const response = await fetch(`http://localhost:${port}/port`);
+          if (response.ok) {
+            const portText = await response.text();
+            const fetchedPort = parseInt(portText.trim(), 10);
+            if (!isNaN(fetchedPort) && fetchedPort > 0) {
+              BRIDGE_PORT = fetchedPort;
+              BRIDGE_URL = `ws://localhost:${BRIDGE_PORT}`;
+              console.log(`${LOG_PREFIX} Loaded bridge port: ${BRIDGE_PORT}`);
+              return true;
+            }
+          }
+        } catch (e) {
+          continue;
+        }
+      }
+      console.warn(`${LOG_PREFIX} Failed to load bridge port, using default (3000)`);
+      return false;
+    } catch (e) {
+      console.warn(`${LOG_PREFIX} Error loading bridge port:`, e);
+      return false;
+    }
+  }
   
   let randomModeActive = false;
   let currentRewardsElement = null;
@@ -707,8 +736,11 @@
     }
   }
   
-  function init() {
+  async function init() {
     log("info", "Initializing LU-RandomSkin plugin");
+    
+    // Load bridge port before initializing socket
+    await loadBridgePort();
     
     // Ensure random mode starts as inactive
     randomModeActive = false;
@@ -718,7 +750,7 @@
     const style = document.createElement("style");
     style.textContent = CSS_RULES;
     document.head.appendChild(style);
-    
+
     // Setup WebSocket bridge
     setupBridgeSocket();
     
