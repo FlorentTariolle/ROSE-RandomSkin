@@ -12,24 +12,59 @@
   const DICE_ENABLED_ASSET_PATH = "dice-enabled.png";
   
   // WebSocket bridge for receiving random mode state from Python
-  let BRIDGE_PORT = 3000; // Default, will be updated from /port endpoint
+  let BRIDGE_PORT = 50000; // Default, will be updated from /bridge-port endpoint
   let BRIDGE_URL = `ws://localhost:${BRIDGE_PORT}`;
+  const BRIDGE_PORT_STORAGE_KEY = "rose_bridge_port";
+  const DISCOVERY_START_PORT = 50000;
+  const DISCOVERY_END_PORT = 50010;
   let bridgeSocket = null;
   let bridgeReady = false;
   let bridgeQueue = [];
   
-  // Load bridge port from /port endpoint
+  // Load bridge port with file-based discovery and localStorage caching
   async function loadBridgePort() {
     try {
-      for (let port = 3000; port <= 3010; port++) {
+      // First, check localStorage for cached port
+      const cachedPort = localStorage.getItem(BRIDGE_PORT_STORAGE_KEY);
+      if (cachedPort) {
+        const port = parseInt(cachedPort, 10);
+        if (!isNaN(port) && port > 0) {
+          // Verify cached port is still valid
+          try {
+            const response = await fetch(`http://localhost:${port}/bridge-port`, {
+              signal: AbortSignal.timeout(1000)
+            });
+            if (response.ok) {
+              const portText = await response.text();
+              const fetchedPort = parseInt(portText.trim(), 10);
+              if (!isNaN(fetchedPort) && fetchedPort > 0) {
+                BRIDGE_PORT = fetchedPort;
+                BRIDGE_URL = `ws://localhost:${BRIDGE_PORT}`;
+                console.log(`${LOG_PREFIX} Loaded bridge port from cache: ${BRIDGE_PORT}`);
+                return true;
+              }
+            }
+          } catch (e) {
+            // Cached port invalid, continue to discovery
+            localStorage.removeItem(BRIDGE_PORT_STORAGE_KEY);
+          }
+        }
+      }
+      
+      // Discovery: try /bridge-port endpoint on high ports (50000-50010)
+      for (let port = DISCOVERY_START_PORT; port <= DISCOVERY_END_PORT; port++) {
         try {
-          const response = await fetch(`http://localhost:${port}/port`);
+          const response = await fetch(`http://localhost:${port}/bridge-port`, {
+            signal: AbortSignal.timeout(1000)
+          });
           if (response.ok) {
             const portText = await response.text();
             const fetchedPort = parseInt(portText.trim(), 10);
             if (!isNaN(fetchedPort) && fetchedPort > 0) {
               BRIDGE_PORT = fetchedPort;
               BRIDGE_URL = `ws://localhost:${BRIDGE_PORT}`;
+              // Cache the discovered port
+              localStorage.setItem(BRIDGE_PORT_STORAGE_KEY, String(BRIDGE_PORT));
               console.log(`${LOG_PREFIX} Loaded bridge port: ${BRIDGE_PORT}`);
               return true;
             }
@@ -38,7 +73,30 @@
           continue;
         }
       }
-      console.warn(`${LOG_PREFIX} Failed to load bridge port, using default (3000)`);
+      
+      // Fallback: try old /port endpoint for backward compatibility
+      for (let port = DISCOVERY_START_PORT; port <= DISCOVERY_END_PORT; port++) {
+        try {
+          const response = await fetch(`http://localhost:${port}/port`, {
+            signal: AbortSignal.timeout(1000)
+          });
+          if (response.ok) {
+            const portText = await response.text();
+            const fetchedPort = parseInt(portText.trim(), 10);
+            if (!isNaN(fetchedPort) && fetchedPort > 0) {
+              BRIDGE_PORT = fetchedPort;
+              BRIDGE_URL = `ws://localhost:${BRIDGE_PORT}`;
+              localStorage.setItem(BRIDGE_PORT_STORAGE_KEY, String(BRIDGE_PORT));
+              console.log(`${LOG_PREFIX} Loaded bridge port (legacy): ${BRIDGE_PORT}`);
+              return true;
+            }
+          }
+        } catch (e) {
+          continue;
+        }
+      }
+      
+      console.warn(`${LOG_PREFIX} Failed to load bridge port, using default (50000)`);
       return false;
     } catch (e) {
       console.warn(`${LOG_PREFIX} Error loading bridge port:`, e);
