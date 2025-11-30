@@ -29,10 +29,10 @@
       if (cachedPort) {
         const port = parseInt(cachedPort, 10);
         if (!isNaN(port) && port > 0) {
-          // Verify cached port is still valid
+          // Verify cached port is still valid with shorter timeout
           try {
             const response = await fetch(`http://localhost:${port}/bridge-port`, {
-              signal: AbortSignal.timeout(1000)
+              signal: AbortSignal.timeout(200)
             });
             if (response.ok) {
               const portText = await response.text();
@@ -51,48 +51,92 @@
         }
       }
       
-      // Discovery: try /bridge-port endpoint on high ports (50000-50010)
-      for (let port = DISCOVERY_START_PORT; port <= DISCOVERY_END_PORT; port++) {
-        try {
-          const response = await fetch(`http://localhost:${port}/bridge-port`, {
-            signal: AbortSignal.timeout(1000)
-          });
-          if (response.ok) {
-            const portText = await response.text();
-            const fetchedPort = parseInt(portText.trim(), 10);
-            if (!isNaN(fetchedPort) && fetchedPort > 0) {
-              BRIDGE_PORT = fetchedPort;
-              BRIDGE_URL = `ws://localhost:${BRIDGE_PORT}`;
-              // Cache the discovered port
-              localStorage.setItem(BRIDGE_PORT_STORAGE_KEY, String(BRIDGE_PORT));
-              console.log(`${LOG_PREFIX} Loaded bridge port: ${BRIDGE_PORT}`);
-              return true;
-            }
+      // OPTIMIZATION: Try default port 50000 FIRST before scanning all ports
+      try {
+        const response = await fetch(`http://localhost:50000/bridge-port`, {
+          signal: AbortSignal.timeout(200)
+        });
+        if (response.ok) {
+          const portText = await response.text();
+          const fetchedPort = parseInt(portText.trim(), 10);
+          if (!isNaN(fetchedPort) && fetchedPort > 0) {
+            BRIDGE_PORT = fetchedPort;
+            BRIDGE_URL = `ws://localhost:${BRIDGE_PORT}`;
+            localStorage.setItem(BRIDGE_PORT_STORAGE_KEY, String(BRIDGE_PORT));
+            console.log(`${LOG_PREFIX} Loaded bridge port: ${BRIDGE_PORT}`);
+            return true;
           }
-        } catch (e) {
-          continue;
+        }
+      } catch (e) {
+        // Port 50000 not ready, continue to discovery
+      }
+      
+      // OPTIMIZATION: Parallel port discovery instead of sequential
+      const portPromises = [];
+      for (let port = DISCOVERY_START_PORT; port <= DISCOVERY_END_PORT; port++) {
+        portPromises.push(
+          fetch(`http://localhost:${port}/bridge-port`, {
+            signal: AbortSignal.timeout(300)
+          })
+          .then(response => {
+            if (response.ok) {
+              return response.text().then(portText => {
+                const fetchedPort = parseInt(portText.trim(), 10);
+                if (!isNaN(fetchedPort) && fetchedPort > 0) {
+                  return { port: fetchedPort, sourcePort: port };
+                }
+                return null;
+              });
+            }
+            return null;
+          })
+          .catch(() => null)
+        );
+      }
+      
+      // Wait for first successful response
+      const results = await Promise.allSettled(portPromises);
+      for (const result of results) {
+        if (result.status === 'fulfilled' && result.value) {
+          BRIDGE_PORT = result.value.port;
+          BRIDGE_URL = `ws://localhost:${BRIDGE_PORT}`;
+          localStorage.setItem(BRIDGE_PORT_STORAGE_KEY, String(BRIDGE_PORT));
+          console.log(`${LOG_PREFIX} Loaded bridge port: ${BRIDGE_PORT}`);
+          return true;
         }
       }
       
-      // Fallback: try old /port endpoint for backward compatibility
+      // Fallback: try old /port endpoint (parallel as well)
+      const legacyPromises = [];
       for (let port = DISCOVERY_START_PORT; port <= DISCOVERY_END_PORT; port++) {
-        try {
-          const response = await fetch(`http://localhost:${port}/port`, {
-            signal: AbortSignal.timeout(1000)
-          });
-          if (response.ok) {
-            const portText = await response.text();
-            const fetchedPort = parseInt(portText.trim(), 10);
-            if (!isNaN(fetchedPort) && fetchedPort > 0) {
-              BRIDGE_PORT = fetchedPort;
-              BRIDGE_URL = `ws://localhost:${BRIDGE_PORT}`;
-              localStorage.setItem(BRIDGE_PORT_STORAGE_KEY, String(BRIDGE_PORT));
-              console.log(`${LOG_PREFIX} Loaded bridge port (legacy): ${BRIDGE_PORT}`);
-              return true;
+        legacyPromises.push(
+          fetch(`http://localhost:${port}/port`, {
+            signal: AbortSignal.timeout(300)
+          })
+          .then(response => {
+            if (response.ok) {
+              return response.text().then(portText => {
+                const fetchedPort = parseInt(portText.trim(), 10);
+                if (!isNaN(fetchedPort) && fetchedPort > 0) {
+                  return { port: fetchedPort, sourcePort: port };
+                }
+                return null;
+              });
             }
-          }
-        } catch (e) {
-          continue;
+            return null;
+          })
+          .catch(() => null)
+        );
+      }
+      
+      const legacyResults = await Promise.allSettled(legacyPromises);
+      for (const result of legacyResults) {
+        if (result.status === 'fulfilled' && result.value) {
+          BRIDGE_PORT = result.value.port;
+          BRIDGE_URL = `ws://localhost:${BRIDGE_PORT}`;
+          localStorage.setItem(BRIDGE_PORT_STORAGE_KEY, String(BRIDGE_PORT));
+          console.log(`${LOG_PREFIX} Loaded bridge port (legacy): ${BRIDGE_PORT}`);
+          return true;
         }
       }
       
