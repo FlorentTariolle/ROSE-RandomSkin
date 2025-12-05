@@ -10,17 +10,17 @@
   const RANDOM_FLAG_ASSET_PATH = "random_flag.png";
   const DICE_DISABLED_ASSET_PATH = "dice-disabled.png";
   const DICE_ENABLED_ASSET_PATH = "dice-enabled.png";
-  
+
   // WebSocket bridge for receiving random mode state from Python
   let BRIDGE_PORT = 50000; // Default, will be updated from /bridge-port endpoint
-  let BRIDGE_URL = `ws://localhost:${BRIDGE_PORT}`;
+  let BRIDGE_URL = `ws://127.0.0.1:${BRIDGE_PORT}`;
   const BRIDGE_PORT_STORAGE_KEY = "rose_bridge_port";
   const DISCOVERY_START_PORT = 50000;
   const DISCOVERY_END_PORT = 50010;
   let bridgeSocket = null;
   let bridgeReady = false;
   let bridgeQueue = [];
-  
+
   // Load bridge port with file-based discovery and localStorage caching
   async function loadBridgePort() {
     try {
@@ -31,7 +31,7 @@
         if (!isNaN(port) && port > 0) {
           // Verify cached port is still valid with shorter timeout
           try {
-            const response = await fetch(`http://localhost:${port}/bridge-port`, {
+            const response = await fetch(`http://127.0.0.1:${port}/bridge-port`, {
               signal: AbortSignal.timeout(200)
             });
             if (response.ok) {
@@ -39,7 +39,7 @@
               const fetchedPort = parseInt(portText.trim(), 10);
               if (!isNaN(fetchedPort) && fetchedPort > 0) {
                 BRIDGE_PORT = fetchedPort;
-                BRIDGE_URL = `ws://localhost:${BRIDGE_PORT}`;
+                BRIDGE_URL = `ws://127.0.0.1:${BRIDGE_PORT}`;
                 console.log(`${LOG_PREFIX} Loaded bridge port from cache: ${BRIDGE_PORT}`);
                 return true;
               }
@@ -50,10 +50,10 @@
           }
         }
       }
-      
+
       // OPTIMIZATION: Try default port 50000 FIRST before scanning all ports
       try {
-        const response = await fetch(`http://localhost:50000/bridge-port`, {
+        const response = await fetch(`http://127.0.0.1:50000/bridge-port`, {
           signal: AbortSignal.timeout(200)
         });
         if (response.ok) {
@@ -61,7 +61,7 @@
           const fetchedPort = parseInt(portText.trim(), 10);
           if (!isNaN(fetchedPort) && fetchedPort > 0) {
             BRIDGE_PORT = fetchedPort;
-            BRIDGE_URL = `ws://localhost:${BRIDGE_PORT}`;
+            BRIDGE_URL = `ws://127.0.0.1:${BRIDGE_PORT}`;
             localStorage.setItem(BRIDGE_PORT_STORAGE_KEY, String(BRIDGE_PORT));
             console.log(`${LOG_PREFIX} Loaded bridge port: ${BRIDGE_PORT}`);
             return true;
@@ -70,76 +70,96 @@
       } catch (e) {
         // Port 50000 not ready, continue to discovery
       }
-      
+
+      // OPTIMIZATION: Try fallback port 50001 SECOND
+      try {
+        const response = await fetch(`http://127.0.0.1:50001/bridge-port`, {
+          signal: AbortSignal.timeout(200)
+        });
+        if (response.ok) {
+          const portText = await response.text();
+          const fetchedPort = parseInt(portText.trim(), 10);
+          if (!isNaN(fetchedPort) && fetchedPort > 0) {
+            BRIDGE_PORT = fetchedPort;
+            BRIDGE_URL = `ws://127.0.0.1:${BRIDGE_PORT}`;
+            localStorage.setItem(BRIDGE_PORT_STORAGE_KEY, String(BRIDGE_PORT));
+            console.log(`${LOG_PREFIX} Loaded bridge port: ${BRIDGE_PORT}`);
+            return true;
+          }
+        }
+      } catch (e) {
+        // Port 50001 not ready, continue to discovery
+      }
+
       // OPTIMIZATION: Parallel port discovery instead of sequential
       const portPromises = [];
       for (let port = DISCOVERY_START_PORT; port <= DISCOVERY_END_PORT; port++) {
         portPromises.push(
-          fetch(`http://localhost:${port}/bridge-port`, {
-            signal: AbortSignal.timeout(300)
+          fetch(`http://127.0.0.1:${port}/bridge-port`, {
+            signal: AbortSignal.timeout(1000)
           })
-          .then(response => {
-            if (response.ok) {
-              return response.text().then(portText => {
-                const fetchedPort = parseInt(portText.trim(), 10);
-                if (!isNaN(fetchedPort) && fetchedPort > 0) {
-                  return { port: fetchedPort, sourcePort: port };
-                }
-                return null;
-              });
-            }
-            return null;
-          })
-          .catch(() => null)
+            .then(response => {
+              if (response.ok) {
+                return response.text().then(portText => {
+                  const fetchedPort = parseInt(portText.trim(), 10);
+                  if (!isNaN(fetchedPort) && fetchedPort > 0) {
+                    return { port: fetchedPort, sourcePort: port };
+                  }
+                  return null;
+                });
+              }
+              return null;
+            })
+            .catch(() => null)
         );
       }
-      
+
       // Wait for first successful response
       const results = await Promise.allSettled(portPromises);
       for (const result of results) {
         if (result.status === 'fulfilled' && result.value) {
           BRIDGE_PORT = result.value.port;
-          BRIDGE_URL = `ws://localhost:${BRIDGE_PORT}`;
+          BRIDGE_URL = `ws://127.0.0.1:${BRIDGE_PORT}`;
           localStorage.setItem(BRIDGE_PORT_STORAGE_KEY, String(BRIDGE_PORT));
           console.log(`${LOG_PREFIX} Loaded bridge port: ${BRIDGE_PORT}`);
           return true;
         }
       }
-      
+
       // Fallback: try old /port endpoint (parallel as well)
       const legacyPromises = [];
       for (let port = DISCOVERY_START_PORT; port <= DISCOVERY_END_PORT; port++) {
         legacyPromises.push(
-          fetch(`http://localhost:${port}/port`, {
-            signal: AbortSignal.timeout(300)
+          fetch(`http://127.0.0.1:${port}/port`, {
+            signal: AbortSignal.timeout(1000)
           })
-          .then(response => {
-            if (response.ok) {
-              return response.text().then(portText => {
-                const fetchedPort = parseInt(portText.trim(), 10);
-                if (!isNaN(fetchedPort) && fetchedPort > 0) {
-                  return { port: fetchedPort, sourcePort: port };
-                }
-                return null;
-              });
-            }
-            return null;
-          })
-          .catch(() => null)
+            .then(response => {
+              if (response.ok) {
+                return response.text().then(portText => {
+                  const fetchedPort = parseInt(portText.trim(), 10);
+                  if (!isNaN(fetchedPort) && fetchedPort > 0) {
+                    return { port: fetchedPort, sourcePort: port };
+                  }
+                  return null;
+                });
+              }
+              return null;
+            })
+            .catch(() => null)
         );
       }
-      
+
       const legacyResults = await Promise.allSettled(legacyPromises);
       for (const result of legacyResults) {
         if (result.status === 'fulfilled' && result.value) {
           BRIDGE_PORT = result.value.port;
-          BRIDGE_URL = `ws://localhost:${BRIDGE_PORT}`;
+          BRIDGE_URL = `ws://127.0.0.1:${BRIDGE_PORT}`;
           localStorage.setItem(BRIDGE_PORT_STORAGE_KEY, String(BRIDGE_PORT));
           console.log(`${LOG_PREFIX} Loaded bridge port (legacy): ${BRIDGE_PORT}`);
           return true;
         }
       }
-      
+
       console.warn(`${LOG_PREFIX} Failed to load bridge port, using default (50000)`);
       return false;
     } catch (e) {
@@ -147,21 +167,21 @@
       return false;
     }
   }
-  
+
   let randomModeActive = false;
   let currentRewardsElement = null;
   let randomFlagImageUrl = null; // HTTP URL from Python
   const pendingRandomFlagRequest = new Map(); // Track pending requests
   let isInChampSelect = false; // Track if we're in ChampSelect phase
   let championLocked = false; // Track if a champion is locked
-  
+
   // Dice button state
   let diceButtonElement = null;
   let diceButtonState = 'disabled'; // 'disabled' or 'enabled'
   let diceDisabledImageUrl = null; // HTTP URL from Python
   let diceEnabledImageUrl = null; // HTTP URL from Python
   const pendingDiceImageRequests = new Map(); // Track pending requests
-  
+
   const CSS_RULES = `
     .skin-selection-item-information.loyalty-reward-icon--rewards.lu-random-flag-active {
       background-repeat: no-repeat !important;
@@ -197,7 +217,7 @@
       opacity: 0.8 !important;
     }
   `;
-  
+
   function log(level, message, data = null) {
     const payload = {
       type: "chroma-log",
@@ -207,32 +227,32 @@
       timestamp: Date.now(),
     };
     if (data) payload.data = data;
-    
+
     if (bridgeReady && bridgeSocket && bridgeSocket.readyState === WebSocket.OPEN) {
       bridgeSocket.send(JSON.stringify(payload));
     } else {
       bridgeQueue.push(JSON.stringify(payload));
     }
-    
+
     // Also log to console for debugging
     const consoleMethod = level === "error" ? console.error : level === "warn" ? console.warn : console.log;
     consoleMethod(`${LOG_PREFIX} ${message}`, data || "");
   }
-  
+
   function setupBridgeSocket() {
     if (bridgeSocket && bridgeSocket.readyState === WebSocket.OPEN) {
       return;
     }
-    
+
     try {
       bridgeSocket = new WebSocket(BRIDGE_URL);
-      
+
       bridgeSocket.onopen = () => {
         log("info", "WebSocket bridge connected");
         bridgeReady = true;
         flushBridgeQueue();
       };
-      
+
       bridgeSocket.onmessage = (event) => {
         try {
           const payload = JSON.parse(event.data);
@@ -241,11 +261,11 @@
           log("error", "Failed to parse bridge message", { error: e.message });
         }
       };
-      
+
       bridgeSocket.onerror = (error) => {
         log("warn", "WebSocket bridge error", { error: error.message || "Unknown error" });
       };
-      
+
       bridgeSocket.onclose = () => {
         log("info", "WebSocket bridge closed, reconnecting...");
         bridgeReady = false;
@@ -257,7 +277,7 @@
       scheduleBridgeRetry();
     }
   }
-  
+
   function scheduleBridgeRetry() {
     setTimeout(() => {
       if (!bridgeReady) {
@@ -265,7 +285,7 @@
       }
     }, 3000);
   }
-  
+
   function flushBridgeQueue() {
     if (bridgeQueue.length > 0 && bridgeReady && bridgeSocket && bridgeSocket.readyState === WebSocket.OPEN) {
       bridgeQueue.forEach((message) => {
@@ -274,7 +294,7 @@
       bridgeQueue = [];
     }
   }
-  
+
   function handleBridgeMessage(payload) {
     if (payload.type === "random-mode-state") {
       handleRandomModeStateUpdate(payload);
@@ -286,13 +306,13 @@
       handleChampionLocked(payload);
     }
   }
-  
+
   function handleChampionLocked(data) {
     const wasLocked = championLocked;
     championLocked = data.locked === true;
-    
+
     log("debug", "Received champion lock state update", { locked: championLocked, wasLocked: wasLocked });
-    
+
     // Only create dice button if entering ChampSelect and champion is now locked
     if (isInChampSelect && championLocked && !wasLocked) {
       log("debug", "Champion locked - creating dice button");
@@ -311,12 +331,12 @@
       }
     }
   }
-  
+
   function handlePhaseChange(data) {
     const wasInChampSelect = isInChampSelect;
     // Check if we're entering ChampSelect phase
     isInChampSelect = data.phase === "ChampSelect" || data.phase === "FINALIZATION";
-    
+
     if (isInChampSelect && !wasInChampSelect) {
       log("debug", "Entered ChampSelect phase - enabling plugin");
       // Only create dice button if champion is already locked
@@ -347,18 +367,30 @@
       }
       // Reset champion lock state when leaving ChampSelect
       championLocked = false;
+      pendingDiceImageRequests.delete(DICE_ENABLED_ASSET_PATH);
+      log("info", "Received dice enabled image URL from Python", { url: url });
+
+      // Update button if it exists and is in enabled state
+      if (diceButtonElement && diceButtonState === 'enabled') {
+        updateDiceButtonImage();
+      }
     }
   }
-  
+
   function handleLocalAssetUrl(data) {
     const assetPath = data.assetPath;
-    const url = data.url;
-    
+    let url = data.url;
+
+    // Fix: Ensure we use 127.0.0.1 for asset URLs to match the bridge connection
+    if (url && typeof url === 'string') {
+      url = url.replace('localhost', '127.0.0.1');
+    }
+
     if (assetPath === RANDOM_FLAG_ASSET_PATH && url) {
       randomFlagImageUrl = url;
       pendingRandomFlagRequest.delete(RANDOM_FLAG_ASSET_PATH);
       log("info", "Received random flag image URL from Python", { url: url });
-      
+
       // Update the flag if it's currently active and we're in ChampSelect
       if (isInChampSelect && randomModeActive) {
         updateRandomFlag();
@@ -367,7 +399,7 @@
       diceDisabledImageUrl = url;
       pendingDiceImageRequests.delete(DICE_DISABLED_ASSET_PATH);
       log("info", "Received dice disabled image URL from Python", { url: url });
-      
+
       // Update button if it exists and is in disabled state
       if (diceButtonElement && diceButtonState === 'disabled') {
         updateDiceButtonImage();
@@ -376,46 +408,46 @@
       diceEnabledImageUrl = url;
       pendingDiceImageRequests.delete(DICE_ENABLED_ASSET_PATH);
       log("info", "Received dice enabled image URL from Python", { url: url });
-      
+
       // Update button if it exists and is in enabled state
       if (diceButtonElement && diceButtonState === 'enabled') {
         updateDiceButtonImage();
       }
     }
   }
-  
+
   function handleRandomModeStateUpdate(data) {
     const wasActive = randomModeActive;
     const previousState = diceButtonState;
     randomModeActive = data.active === true;
     diceButtonState = data.diceState || 'disabled';
-    
-    log("info", "Received random mode state update", { 
-      active: randomModeActive, 
+
+    log("info", "Received random mode state update", {
+      active: randomModeActive,
       wasActive: wasActive,
       diceState: diceButtonState,
       randomSkinId: data.randomSkinId
     });
-    
+
     // Only update if we're in ChampSelect
     if (!isInChampSelect) {
       return;
     }
-    
+
     // Update dice button state
     updateDiceButton();
-    
+
     // Always update the flag when we receive a state update (even if state didn't change)
     // This ensures the flag is shown even if the element wasn't found initially
     updateRandomFlag();
   }
-  
+
   function findRewardsElement() {
     // Only try to find elements when in ChampSelect
     if (!isInChampSelect) {
       return null;
     }
-    
+
     // Only consider the central skin item (offset-2) in the carousel
     const allItems = document.querySelectorAll(".skin-selection-item");
     for (const item of allItems) {
@@ -428,30 +460,30 @@
         }
       }
     }
-    
+
     // Only log if we're actually in ChampSelect (to avoid spam before entering)
     log("debug", "Rewards element not found in central skin item");
     return null;
   }
-  
+
   function findDiceButtonContainer() {
     // Only try to find container when in ChampSelect
     if (!isInChampSelect) {
       return null;
     }
-    
+
     // Find the carousel container to match its stacking context
     const carouselContainer = document.querySelector(".skin-selection-carousel-container");
     if (carouselContainer) {
       return carouselContainer;
     }
-    
+
     // Fallback: find the carousel itself
     const carousel = document.querySelector(".skin-selection-carousel");
     if (carousel) {
       return carousel;
     }
-    
+
     // Last fallback: find the main champ select container and then div.visible
     const mainContainer = document.querySelector(".champion-select-main-container");
     if (mainContainer) {
@@ -460,7 +492,7 @@
         return visibleDiv;
       }
     }
-    
+
     return null;
   }
 
@@ -469,7 +501,7 @@
     if (!isInChampSelect) {
       return null;
     }
-    
+
     // Always find the central skin item (offset-2) in the carousel
     const allItems = document.querySelectorAll(".skin-selection-item");
     for (const item of allItems) {
@@ -486,7 +518,7 @@
         };
       }
     }
-    
+
     // Fallback: try selected item if central item not found
     const selectedItem = document.querySelector(".skin-selection-item.skin-selection-item-selected");
     if (selectedItem) {
@@ -499,23 +531,23 @@
         relativeTo: selectedItem
       };
     }
-    
+
     return null;
   }
-  
+
   function createDiceButton() {
     // Don't create button if champion is not locked
     if (!championLocked) {
       log("debug", "Cannot create dice button - champion not locked");
       return;
     }
-    
+
     // Remove existing button if it exists
     if (diceButtonElement) {
       diceButtonElement.remove();
       diceButtonElement = null;
     }
-    
+
     // Find the target container (div.visible in main champ select container)
     const targetContainer = findDiceButtonContainer();
     if (!targetContainer) {
@@ -526,7 +558,7 @@
       }
       return;
     }
-    
+
     const location = findDiceButtonLocation();
     if (!location) {
       // Don't log error on every attempt - only log occasionally
@@ -536,19 +568,19 @@
       }
       return;
     }
-    
+
     // Request images if not already loaded
     requestDiceButtonImages();
-    
+
     // Get container's position relative to viewport for absolute positioning
     const containerRect = targetContainer.getBoundingClientRect();
-    
+
     // Ensure container has positioning context for absolute children
     const containerComputedStyle = window.getComputedStyle(targetContainer);
     if (containerComputedStyle.position === 'static') {
       targetContainer.style.position = 'relative';
     }
-    
+
     const button = document.createElement("div");
     button.className = `lu-random-dice-button ${diceButtonState}`;
     button.style.position = "absolute"; // Use absolute positioning relative to container
@@ -562,37 +594,37 @@
     button.style.display = "block"; // Ensure button is visible
     button.style.visibility = "visible"; // Ensure button is visible
     button.style.opacity = "1"; // Ensure button is visible
-    
+
     // Append to the target container instead of document.body
     targetContainer.appendChild(button);
     diceButtonElement = button;
-    
+
     // Set initial background image based on state (after appending to DOM)
     updateDiceButtonImage();
-    
+
     // Add click handler
     button.addEventListener("click", (e) => {
       e.stopPropagation();
       e.preventDefault();
       handleDiceButtonClick();
     });
-    
+
     // Store the relative element for repositioning
     diceButtonElement._relativeTo = location.relativeTo;
     diceButtonElement._container = targetContainer;
-    
+
     // Force browser to render the button immediately
     void button.offsetHeight; // Trigger reflow
     button.style.display = "block"; // Ensure it's set again after reflow
-    
+
     log("info", "Created dice button", { x: location.x, y: location.y, state: diceButtonState });
   }
-  
+
   function updateDiceButtonImage() {
     if (!diceButtonElement) {
       return;
     }
-    
+
     // Use local images if available, otherwise wait for them to load
     if (diceButtonState === 'disabled' && diceDisabledImageUrl) {
       diceButtonElement.style.backgroundImage = `url("${diceDisabledImageUrl}")`;
@@ -603,39 +635,39 @@
       requestDiceButtonImages();
     }
   }
-  
+
   function requestDiceButtonImages() {
     // Request disabled image
     if (!diceDisabledImageUrl && !pendingDiceImageRequests.has(DICE_DISABLED_ASSET_PATH)) {
       pendingDiceImageRequests.set(DICE_DISABLED_ASSET_PATH, true);
-      
+
       const payload = {
         type: "request-local-asset",
         assetPath: DICE_DISABLED_ASSET_PATH,
         timestamp: Date.now(),
       };
-      
+
       log("debug", "Requesting dice disabled image from Python", { assetPath: DICE_DISABLED_ASSET_PATH });
-      
+
       if (bridgeReady && bridgeSocket && bridgeSocket.readyState === WebSocket.OPEN) {
         bridgeSocket.send(JSON.stringify(payload));
       } else {
         bridgeQueue.push(JSON.stringify(payload));
       }
     }
-    
+
     // Request enabled image
     if (!diceEnabledImageUrl && !pendingDiceImageRequests.has(DICE_ENABLED_ASSET_PATH)) {
       pendingDiceImageRequests.set(DICE_ENABLED_ASSET_PATH, true);
-      
+
       const payload = {
         type: "request-local-asset",
         assetPath: DICE_ENABLED_ASSET_PATH,
         timestamp: Date.now(),
       };
-      
+
       log("debug", "Requesting dice enabled image from Python", { assetPath: DICE_ENABLED_ASSET_PATH });
-      
+
       if (bridgeReady && bridgeSocket && bridgeSocket.readyState === WebSocket.OPEN) {
         bridgeSocket.send(JSON.stringify(payload));
       } else {
@@ -643,35 +675,35 @@
       }
     }
   }
-  
+
   function updateDiceButton() {
     if (!diceButtonElement) {
       createDiceButton();
       return;
     }
-    
+
     // Don't update position dynamically - it's set once on creation
     // Only update button state and image
-    
+
     // Update button state
     diceButtonElement.className = `lu-random-dice-button ${diceButtonState}`;
-    
+
     // Update button image based on state
     updateDiceButtonImage();
-    
+
     log("debug", "Updated dice button state", { state: diceButtonState });
   }
-  
+
   function handleDiceButtonClick() {
     log("info", "Dice button clicked", { currentState: diceButtonState });
-    
+
     // Send click event to Python
     const payload = {
       type: "dice-button-click",
       state: diceButtonState,
       timestamp: Date.now(),
     };
-    
+
     if (bridgeReady && bridgeSocket && bridgeSocket.readyState === WebSocket.OPEN) {
       bridgeSocket.send(JSON.stringify(payload));
     } else {
@@ -679,20 +711,20 @@
       log("warn", "Bridge not ready, queued dice button click");
     }
   }
-  
+
   function requestRandomFlagImage() {
     // Request random flag image from Python (same way as HistoricMode)
     if (!randomFlagImageUrl && !pendingRandomFlagRequest.has(RANDOM_FLAG_ASSET_PATH)) {
       pendingRandomFlagRequest.set(RANDOM_FLAG_ASSET_PATH, true);
-      
+
       const payload = {
         type: "request-local-asset",
         assetPath: RANDOM_FLAG_ASSET_PATH,
         timestamp: Date.now(),
       };
-      
+
       log("debug", "Requesting random flag image from Python", { assetPath: RANDOM_FLAG_ASSET_PATH });
-      
+
       if (bridgeReady && bridgeSocket && bridgeSocket.readyState === WebSocket.OPEN) {
         bridgeSocket.send(JSON.stringify(payload));
       } else {
@@ -700,16 +732,16 @@
       }
     }
   }
-  
+
   function updateRandomFlag() {
     // Only try to update if we're in ChampSelect
     if (!isInChampSelect) {
       return;
     }
-    
+
     // Always find the element in the currently selected skin (don't use cached element)
     const element = findRewardsElement();
-    
+
     if (!element) {
       // Only retry if we're still in ChampSelect
       if (!isInChampSelect) {
@@ -735,18 +767,18 @@
       }
       return;
     }
-    
+
     // Reset retry count on success
     updateRandomFlag._retryCount = 0;
-    
+
     // If we have a previously cached element that's different from the current one, hide it first
     if (currentRewardsElement && currentRewardsElement !== element) {
       log("debug", "Selected skin changed - hiding flag on previous element");
       hideFlagOnElement(currentRewardsElement);
     }
-    
+
     currentRewardsElement = element;
-    
+
     // Log element state for debugging
     const computedStyle = window.getComputedStyle(element);
     const isVisible = computedStyle.display !== "none" && computedStyle.visibility !== "hidden" && computedStyle.opacity !== "0";
@@ -757,7 +789,7 @@
       isVisible: isVisible,
       classes: Array.from(element.classList)
     });
-    
+
     if (randomModeActive) {
       // Request image if we don't have it yet
       if (!randomFlagImageUrl) {
@@ -765,12 +797,12 @@
         // Wait for image URL before applying
         return;
       }
-      
+
       // Force element to be visible (rewards icon is usually hidden)
       element.style.setProperty("display", "block", "important");
       element.style.setProperty("visibility", "visible", "important");
       element.style.setProperty("opacity", "1", "important");
-      
+
       // Apply the image URL from Python
       element.classList.add("lu-random-flag-active");
       element.style.setProperty("background-image", `url("${randomFlagImageUrl}")`, "important");
@@ -786,8 +818,8 @@
       element.style.setProperty("-webkit-user-select", "none", "important");
       element.style.setProperty("list-style-type", "none", "important");
       element.style.setProperty("content", " ", "important");
-      
-      log("info", "Random flag shown on rewards element", { 
+
+      log("info", "Random flag shown on rewards element", {
         url: randomFlagImageUrl,
         display: element.style.display,
         visibility: element.style.visibility
@@ -798,16 +830,16 @@
       log("info", "Random flag hidden on rewards element");
     }
   }
-  
+
   function hideFlagOnElement(element) {
     if (!element) return;
-    
+
     // Only remove our flag class
     element.classList.remove("lu-random-flag-active");
-    
+
     // Check if historic flag is active - if so, don't remove shared styles
     const hasHistoricFlag = element.classList.contains("lu-historic-flag-active");
-    
+
     if (!hasHistoricFlag) {
       // No other flag is active - safe to remove all styles
       element.style.removeProperty("background-image");
@@ -837,17 +869,17 @@
       // Don't remove other styles as historic flag needs them
     }
   }
-  
+
   async function init() {
     log("info", "Initializing LU-RandomSkin plugin");
-    
+
     // Load bridge port before initializing socket
     await loadBridgePort();
-    
+
     // Ensure random mode starts as inactive
     randomModeActive = false;
     diceButtonState = 'disabled';
-    
+
     // Inject CSS
     const style = document.createElement("style");
     style.textContent = CSS_RULES;
@@ -855,13 +887,13 @@
 
     // Setup WebSocket bridge
     setupBridgeSocket();
-    
+
     // Watch for DOM changes to find rewards element and dice button location (only when in ChampSelect)
     const observer = new MutationObserver(() => {
       if (!isInChampSelect) {
         return; // Don't do anything if not in ChampSelect
       }
-      
+
       if (randomModeActive && !currentRewardsElement) {
         updateRandomFlag();
       }
@@ -870,23 +902,23 @@
         createDiceButton();
       }
     });
-    
+
     observer.observe(document.body, {
       childList: true,
       subtree: true,
     });
-    
+
     // Request random flag image on init (for when it's needed)
     requestRandomFlagImage();
-    
+
     // Request dice button images on init
     requestDiceButtonImages();
-    
+
     // Don't try to create elements on init - wait for phase-change message to know if we're in ChampSelect
-    
+
     log("info", "LU-RandomSkin plugin initialized");
   }
-  
+
   // Start when DOM is ready
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", init);
