@@ -452,14 +452,12 @@
       if (item.classList.contains("skin-carousel-offset-2")) {
         const info = item.querySelector(".skin-selection-item-information.loyalty-reward-icon--rewards");
         if (info) {
-          log("debug", "Found rewards element in central skin item (offset-2)");
           return info;
         }
       }
     }
 
     // Only log if we're actually in ChampSelect (to avoid spam before entering)
-    log("debug", "Rewards element not found in central skin item");
     return null;
   }
 
@@ -776,16 +774,9 @@
 
     currentRewardsElement = element;
 
-    // Log element state for debugging
+    // Check element visibility (no logging to reduce spam)
     const computedStyle = window.getComputedStyle(element);
     const isVisible = computedStyle.display !== "none" && computedStyle.visibility !== "hidden" && computedStyle.opacity !== "0";
-    log("debug", "Found rewards element", {
-      display: computedStyle.display,
-      visibility: computedStyle.visibility,
-      opacity: computedStyle.opacity,
-      isVisible: isVisible,
-      classes: Array.from(element.classList)
-    });
 
     if (randomModeActive) {
       // Request image if we don't have it yet
